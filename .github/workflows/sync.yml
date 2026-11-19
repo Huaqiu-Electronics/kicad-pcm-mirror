@@ -124,8 +124,8 @@ jobs:
           print(f"- source: {data['source']}")
           print(f"- source revision: `{data['source_revision']}`")
           print(f"- complete: {data['complete']}")
-          print(f"- artifacts: {data['artifact_count']} ({data['artifact_bytes']} bytes)")
-          print(f"- published: {data.get('published_count', data['artifact_count'])}")
+          print(f"- artifacts: {data['artifact_count']} declared / {data.get('published_count', data['artifact_count'])} published")
+          print(f"- bytes: {data['artifact_bytes']} (published)")
           excluded = data.get("excluded") or []
           print(f"- excluded upstream links: {len(excluded)}")
           for item in excluded:

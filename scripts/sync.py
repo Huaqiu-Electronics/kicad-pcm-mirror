@@ -79,6 +79,17 @@ def build_snapshot(args) -> dict:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
+    # 元数据按 URL 缓存：v1/v2 的 packages 与 resources 常常指向同一文件
+    fetched_urls: dict[str, bytes] = {}
+
+    def fetch_once(url: str, accept: str | None) -> tuple[bytes, bool]:
+        cached = fetched_urls.get(url)
+        if cached is not None:
+            return cached, True
+        raw = _fetch_metadata(url, accept, args)
+        fetched_urls[url] = raw
+        return raw, False
+
     # 1) 上游两个变体的 repository.json
     repositories: dict[str, dict] = {}
     for variant in VARIANTS:
@@ -97,7 +108,7 @@ def build_snapshot(args) -> dict:
         repo = repositories[variant.key]["original"]
 
         packages_url = repo["packages"]["url"]
-        raw = _fetch_metadata(packages_url, None, args)
+        raw, reused = fetch_once(packages_url, None)
         actual = sha256_bytes(raw)
         declared = (repo["packages"].get("sha256") or "").lower()
         if declared and declared != actual:
@@ -108,10 +119,13 @@ def build_snapshot(args) -> dict:
             "original": loads(raw),
             "sha256": actual,
         }
-        log(f"已获取 {variant.key} packages.json（{len(raw)} 字节）")
+        log(
+            f"已获取 {variant.key} packages.json（{len(raw)} 字节"
+            f"{'，复用同一 URL' if reused else ''}）"
+        )
 
         resources_url = repo["resources"]["url"]
-        resources_raw = _fetch_metadata(resources_url, None, args)
+        resources_raw, reused = fetch_once(resources_url, None)
         resources_sha = sha256_bytes(resources_raw)
         declared = (repo["resources"].get("sha256") or "").lower()
         if declared and declared != resources_sha:
@@ -123,7 +137,10 @@ def build_snapshot(args) -> dict:
             raise SyncError(f"resources 校验失败: {problem}")
         resources_by_sha.setdefault(resources_sha, resources_raw)
         variant_resources[variant.key] = resources_sha
-        log(f"已获取 {variant.key} resources（{len(resources_raw)} 字节）")
+        log(
+            f"已获取 {variant.key} resources（{len(resources_raw)} 字节"
+            f"{'，复用同一 URL' if reused else ''}）"
+        )
 
     # 资源文件命名：内容相同则共用一个 resources.zip，不同则按 sha 前缀区分
     resource_names: dict[str, str] = {}
@@ -171,7 +188,7 @@ def build_snapshot(args) -> dict:
     def on_result(name: str, result, error) -> None:
         done["count"] += 1
         if done["count"] % 25 == 0 or done["count"] == len(tasks):
-            log(f"下载进度: {done['count']}/{len(tasks)}")
+            log(f"下载进度: 已完成 {done['count']}/{len(tasks)}")
 
     results, errors = download_many(
         tasks,
@@ -201,7 +218,17 @@ def build_snapshot(args) -> dict:
         raise SyncError(f"{len(fatal)} 个产物下载失败，快照构建终止")
 
     skipped = sum(1 for item in results.values() if item.get("skipped"))
-    log(f"下载完成: 成功 {len(results)}（复用本地 {skipped}）")
+    dead_links = sum(
+        1 for exc in excluded.values() if isinstance(exc, MissingUpstream)
+    )
+    drifted = sum(
+        1 for exc in excluded.values() if isinstance(exc, ChecksumMismatch)
+    )
+    log(
+        f"下载完成: {len(tasks)} = {len(results)} 发布 + {len(excluded)} 剔除"
+        f"（死链 {dead_links} / 校验不符 {drifted}）"
+        + (f"，复用本地 {skipped}" if skipped else "")
+    )
 
     size_warnings = [
         {
@@ -263,16 +290,18 @@ def build_snapshot(args) -> dict:
             "resources_sha256": resources_sha,
             "versions": rewritten,
         }
-        log(f"已生成 {variant.repository_file}（重写 {rewritten} 个下载地址）")
+        log(f"已生成 {variant.packages_file}（重写 {rewritten} 个下载地址）")
+        log(f"已生成 {variant.repository_file}（packages 与 resources 地址）")
 
     # 8) 构建追踪信息
     sync_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     artifact_list = []
-    total_bytes = 0
+    published_bytes = 0
     for name in sorted(artifacts):
         path = out / name
         size = path.stat().st_size if path.is_file() else (artifacts[name]["size"] or 0)
-        total_bytes += size
+        if name not in excluded:
+            published_bytes += size
         artifact_list.append(
             {
                 "name": name,
@@ -292,7 +321,7 @@ def build_snapshot(args) -> dict:
         "complete": not incomplete,
         "artifact_count": len(artifacts),
         "published_count": len(artifacts) - len(excluded),
-        "artifact_bytes": total_bytes,
+        "artifact_bytes": published_bytes,
         "excluded": [
             {"name": name, "reason": str(exc)}
             for name, exc in sorted(excluded.items())
@@ -330,7 +359,7 @@ def build_snapshot(args) -> dict:
         "sync_time": sync_time,
         "artifact_count": len(artifacts),
         "published_count": len(artifacts) - len(excluded),
-        "artifact_bytes": total_bytes,
+        "artifact_bytes": published_bytes,
         "complete": not incomplete,
         "excluded": len(excluded),
         "size_mismatches": len(size_warnings),
@@ -381,7 +410,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(
-        f"{LOG} 同步完成: {summary['artifact_count']} 个产物, "
+        f"{LOG} 同步完成: 声明 {summary['artifact_count']} 个产物 / "
+        f"发布 {summary['published_count']} 个 / "
         f"{summary['artifact_bytes']} 字节, 时间 {summary['sync_time']}",
         flush=True,
     )
