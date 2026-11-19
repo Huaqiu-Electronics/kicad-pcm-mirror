@@ -99,8 +99,12 @@ KiCad 中填写 `http://192.168.1.10:8080/kicad-addons/repository.json`。
 - `DOWNLOAD_BASE_URL` 必须以 `http://` 或 `https://` 开头，结尾斜杠会自动补全；
   未设置时保留镜像内置地址；格式非法则容器启动失败并给出原因
 - 修改该变量需要重建容器（`docker rm -f` 后重新 `docker run`），`docker restart` 不会重新替换
-- 地址应填使用者能访问到的地址（如 `http://192.168.1.10:8080/kicad-addons/`）；
-  只填到主机端口时会自动补 `/kicad-addons/`，仅本机使用时才填 `localhost`
+- 地址应填使用者能访问到的地址；建议直接写完整路径
+  `http://<host>:8080/kicad-addons/`，只写到端口时启动脚本会自动补 `/kicad-addons/`，
+  不要自己重复写两遍
+- 仅本机使用时才填 `localhost`，局域网访问要填客户端可达的 IP 或域名
+- 如果清单里出现 `.../kicad-addons/kicad-addons/` 的双重路径，说明容器来自旧镜像
+  （早期启动脚本会重复追加前缀）；拉取新镜像后 `docker rm -f` 重建容器即可
 
 ## 校验与回滚
 

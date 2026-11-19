@@ -33,13 +33,20 @@ case "$TARGET" in
 esac
 
 # nginx 只把 /kicad-addons/ 暴露为下载路径；只给了主机地址时补全
-case "$TARGET" in
-    http://*/ | https://*/)
-        TARGET="${TARGET}kicad-addons/"
+rest="${TARGET#*://}"
+host="${TARGET%%://*}://${rest%%/*}"
+path="/${rest#*/}"
+if [ "$rest" = "${rest%%/*}" ]; then
+    path=""
+fi
+
+case "$path" in
+    "" | "/")
+        TARGET="${host}/kicad-addons/"
         log "DOWNLOAD_BASE_URL 未包含路径，已按 nginx 路由补全为 $TARGET"
         ;;
     */kicad-addons/) ;;
-    *) log "警告: 路径不是 .../kicad-addons/，若无反向代理改写，插件下载会 404" ;;
+    *) log "警告: 路径 $path 不是 /kicad-addons/，若无反向代理改写，插件下载会 404" ;;
 esac
 
 if [ "$TARGET" = "$BAKED_BASE" ]; then
