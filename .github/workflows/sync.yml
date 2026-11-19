@@ -15,7 +15,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: kicad-pcm-mirror
@@ -64,7 +63,6 @@ jobs:
         run: |
           TAG="$(TZ=Asia/Shanghai date +%Y.%m.%d)-$(git rev-parse --short HEAD)-r${GITHUB_RUN_NUMBER}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "ghcr=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - name: Sync official repository
         run: |
@@ -84,13 +82,6 @@ jobs:
           username: liuweijian@1613452717930870
           password: ${{ secrets.KICAD_PCM_ACR_PASSWORD }}
 
-      - name: Login to GHCR
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build and push snapshot image
         if: env.LIMIT == '0'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -102,8 +93,6 @@ jobs:
           tags: |
             crpi-uk7yo7mxz74rkbcy.cn-shanghai.personal.cr.aliyuncs.com/lwj-kicad/kicad-pcm-mirror:${{ steps.meta.outputs.tag }}
             crpi-uk7yo7mxz74rkbcy.cn-shanghai.personal.cr.aliyuncs.com/lwj-kicad/kicad-pcm-mirror:latest
-            ${{ steps.meta.outputs.ghcr }}:${{ steps.meta.outputs.tag }}
-            ${{ steps.meta.outputs.ghcr }}:latest
 
       - name: Upload build metadata
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
