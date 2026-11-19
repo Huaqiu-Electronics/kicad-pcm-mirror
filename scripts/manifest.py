@@ -20,7 +20,7 @@ UPSTREAM_REPOSITORY_URL = "https://repository.kicad.org/repository.json"
 ACCEPT_V1 = "application/json"
 ACCEPT_V2 = "application/vnd.kicad.pcm.v2+json"
 
-DEFAULT_BASE_URL = "https://eda.cn/kicad-addons/"
+DEFAULT_BASE_URL = "https://www.eda.cn/kicad-addons/"
 
 _MISSING = object()
 

@@ -19,7 +19,7 @@ if str(SCRIPTS) not in sys.path:
 from manifest import ACCEPT_V1, ACCEPT_V2  # noqa: E402
 from verify import sha256_bytes  # noqa: E402
 
-BASE_URL = "https://eda.cn/kicad-addons/"
+BASE_URL = "https://www.eda.cn/kicad-addons/"
 
 
 class UpstreamServer:

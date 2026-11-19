@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BASE_URL: https://eda.cn/kicad-addons/
+  BASE_URL: https://www.eda.cn/kicad-addons/
   PYTHON_VERSION: "3.12"
   # 定时任务没有 inputs，统一回退为 0（全量）
   LIMIT: ${{ github.event.inputs.limit || '0' }}

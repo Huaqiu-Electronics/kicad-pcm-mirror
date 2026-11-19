@@ -5,8 +5,8 @@ KiCad 官方插件仓库（[repository.kicad.org](https://repository.kicad.org/r
 每次同步都把官方仓库的全部插件 ZIP 原样打包进一个不可变的 Docker 镜像，
 镜像内由 Nginx 提供静态文件服务，对外访问地址保持稳定：
 
-- 仓库入口：`https://eda.cn/kicad-addons/repository.json`
-- 插件文件：`https://eda.cn/kicad-addons/{identifier}-{version}.zip`
+- 仓库入口：`https://www.eda.cn/kicad-addons/repository.json`
+- 插件文件：`https://www.eda.cn/kicad-addons/{identifier}-{version}.zip`
 
 插件 ZIP 保持原始字节，不重新压缩、不修改内容；仓库 JSON 只重写下载地址。
 
@@ -29,7 +29,7 @@ docker-compose.yml   本机启动
 
 ```bash
 python -m pip install -r requirements.txt
-python scripts/sync.py --out dist --base-url https://eda.cn/kicad-addons/
+python scripts/sync.py --out dist --base-url https://www.eda.cn/kicad-addons/
 docker compose up -d --build
 curl http://localhost:8080/kicad-addons/repository.json
 ```
@@ -81,10 +81,13 @@ ACR 的 Registry 地址与用户名直接写在 workflow 中，只需配置一�
 
 ## 运行（本地 / 局域网）
 
-镜像内的清单地址在构建期固化为 `https://eda.cn/kicad-addons/`；容器启动时
+镜像内的清单地址在构建期固化为 `--base-url`（默认 `https://www.eda.cn/kicad-addons/`，
+记录在 `mirror-manifest.json` 的 `base_url`）；容器启动时
 `/docker-entrypoint.d/40-rewrite-download-urls.sh` 会按 `DOWNLOAD_BASE_URL`
 原地替换 `repository.v1.json`、`repository.v2.json`、`packages-v1.json`、
-`packages.json` 中的该前缀，无需重新构建镜像。
+`packages.json` 中的该前缀，并重新计算 packages 文件的 sha256 回写到
+`repository.v1.json` / `repository.v2.json` 的 `packages.sha256`，保证 KiCad
+下载后的哈希校验通过；无需重新构建镜像。
 
 ```bash
 docker run -d --name kicad-pcm-mirror \
@@ -97,7 +100,8 @@ KiCad 中填写 `http://192.168.1.10:8080/kicad-addons/repository.json`。
 
 - 容器内 nginx 监听 8080，`-p` 必须映射到容器的 8080（写成 `-p 8080:80` 会连接被重置）
 - `DOWNLOAD_BASE_URL` 必须以 `http://` 或 `https://` 开头，结尾斜杠会自动补全；
-  未设置时保留镜像内置地址；格式非法则容器启动失败并给出原因
+  未设置时默认 `https://www.eda.cn/kicad-addons/`，与镜像内置地址相同时脚本直接跳过、
+  不改文件也不动 sha256；格式非法则容器启动失败并给出原因
 - 修改该变量需要重建容器（`docker rm -f` 后重新 `docker run`），`docker restart` 不会重新替换
 - 地址应填使用者能访问到的地址；建议直接写完整路径
   `http://<host>:8080/kicad-addons/`，只写到端口时启动脚本会自动补 `/kicad-addons/`，
