@@ -42,9 +42,12 @@ def fetch_bytes(
     url: str,
     accept: str | None = None,
     timeout: float = 60.0,
-    retries: int = 3,
+    retries: int = 6,
 ) -> bytes:
-    """下载小文件到内存（元数据用），失败按指数退避重试。"""
+    """下载小文件到内存（元数据用），失败按指数退避重试。
+
+    上游 CDN 偶发 5xx/504，默认多等几轮（约 1 分钟）再放弃。
+    """
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
@@ -60,8 +63,8 @@ def fetch_bytes(
         except (urllib.error.URLError, OSError, DownloadError) as exc:
             last_error = exc
             if attempt < retries:
-                time.sleep(min(2 ** (attempt - 1), 8))
-    raise DownloadError(f"下载失败: {url}: {last_error}")
+                time.sleep(min(2 ** attempt, 20))
+    raise DownloadError(f"下载失败（尝试 {retries} 次）: {url}: {last_error}")
 
 
 def _stream_to_file(

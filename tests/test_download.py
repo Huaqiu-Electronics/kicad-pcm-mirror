@@ -128,6 +128,14 @@ def test_fetch_bytes_retries_on_empty_body(upstream):
     assert upstream.hits["/meta.json"] == 2
 
 
+def test_fetch_bytes_retries_server_errors(upstream):
+    upstream.add("/meta.json", b'{"ok":true}')
+    upstream.fail_next("/meta.json", 1)
+
+    assert fetch_bytes(f"{upstream.base}/meta.json", retries=2) == b'{"ok":true}'
+    assert upstream.hits["/meta.json"] == 2
+
+
 def test_fetch_bytes_routes_by_accept_header(upstream):
     upstream.add("/meta.json", b'{"schema":"v1"}', ACCEPT_V1)
     upstream.add("/meta.json", b'{"schema":"v2"}', ACCEPT_V2)
