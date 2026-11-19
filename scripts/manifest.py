@@ -126,6 +126,34 @@ def collect_artifacts(packages_doc: dict) -> dict[str, dict]:
     return artifacts
 
 
+def drop_versions(packages_doc: dict, names: set[str]) -> int:
+    """删除指向失效产物的 version 条目，返回删除条数。
+
+    某个插件若已无任何可用版本，则整个插件条目一并移除，
+    避免产出 ``versions: []`` 这种不被 PCM 接受的结构。
+    """
+    packages = packages_doc.get("packages")
+    if not isinstance(packages, list):
+        raise ManifestError("packages.json 缺少 packages 数组")
+    removed = 0
+    kept_packages = []
+    for pkg in packages:
+        versions = pkg.get("versions")
+        if not isinstance(versions, list):
+            raise ManifestError(f"插件 {pkg.get('identifier')!r} 缺少 versions 数组")
+        kept = [
+            version
+            for version in versions
+            if artifact_name(pkg["identifier"], version["version"]) not in names
+        ]
+        removed += len(versions) - len(kept)
+        if kept:
+            pkg["versions"] = kept
+            kept_packages.append(pkg)
+    packages[:] = kept_packages
+    return removed
+
+
 def rewrite_package_urls(packages_doc: dict, base_url: str) -> int:
     """把每个版本的 download_url 指向镜像地址，返回重写条数。"""
     base = normalize_base_url(base_url)

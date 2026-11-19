@@ -20,13 +20,14 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from download import download_many, fetch_bytes
+from download import ChecksumMismatch, MissingUpstream, download_many, fetch_bytes
 from manifest import (
     DEFAULT_BASE_URL,
     UPSTREAM_REPOSITORY_URL,
     VARIANTS,
     ManifestError,
     collect_artifacts,
+    drop_versions,
     dumps_bytes,
     iter_versions,
     loads,
@@ -180,15 +181,45 @@ def build_snapshot(args) -> dict:
         skip_existing=args.skip_existing,
         on_result=on_result,
     )
-    if errors:
-        for name, message in errors:
-            print(f"{LOG} 下载失败: {name}: {message}", file=sys.stderr)
-        raise SyncError(f"{len(errors)} 个产物下载失败，快照构建终止")
+    # 上游死链（404/410）与内容漂移（sha256 不符）剔除对应版本；其余失败仍阻断发布
+    excluded = {}
+    for name, exc in errors:
+        if isinstance(exc, MissingUpstream):
+            excluded[name] = exc
+            log(f"上游链接已失效，从镜像索引剔除: {name} ({exc})")
+        elif isinstance(exc, ChecksumMismatch):
+            excluded[name] = exc
+            log(f"内容与上游声明 sha256 不符，从镜像索引剔除: {name} ({exc})")
+    fatal = [
+        (name, exc)
+        for name, exc in errors
+        if name not in excluded
+    ]
+    for name, exc in fatal:
+        print(f"{LOG} 下载失败: {name}: {exc}", file=sys.stderr)
+    if fatal:
+        raise SyncError(f"{len(fatal)} 个产物下载失败，快照构建终止")
+
     skipped = sum(1 for item in results.values() if item.get("skipped"))
     log(f"下载完成: 成功 {len(results)}（复用本地 {skipped}）")
 
+    size_warnings = [
+        {
+            "name": name,
+            "declared_size": artifacts[name]["size"],
+            "actual_size": result["size"],
+        }
+        for name, result in sorted(results.items())
+        if result.get("size_mismatch")
+    ]
+    if size_warnings:
+        log(
+            f"上游 download_size 与真实字节不一致: {len(size_warnings)} 个"
+            f"（以 sha256 为准，详见 manifest）"
+        )
+
     # 5) 清理已不被上游引用的旧产物
-    referenced = set(artifacts) | set(resource_names.values())
+    referenced = (set(artifacts) - set(excluded)) | set(resource_names.values())
     for path in out.glob("*.zip"):
         if path.name not in referenced:
             path.unlink()
@@ -198,10 +229,15 @@ def build_snapshot(args) -> dict:
     for sha, name in resource_names.items():
         _write_atomic(out / name, resources_by_sha[sha])
 
-    # 7) 重写 packages 与 repository
+    # 7) 剔除失效版本后重写 packages 与 repository
     variant_summary: dict[str, dict] = {}
+    pruned_packages: dict[str, dict] = {}
     for variant in VARIANTS:
         packages = copy.deepcopy(packages_state[variant.key]["original"])
+        dropped = drop_versions(packages, set(excluded))
+        if dropped:
+            log(f"{variant.key}: 剔除 {dropped} 个失效版本条目")
+        pruned_packages[variant.key] = copy.deepcopy(packages)
         rewritten = rewrite_package_urls(packages, base)
         packages_bytes = dumps_bytes(packages)
         _write_atomic(out / variant.packages_file, packages_bytes)
@@ -244,6 +280,7 @@ def build_snapshot(args) -> dict:
                 "size": size,
                 "source_url": artifacts[name]["source_url"],
                 "present": path.is_file(),
+                "excluded": name in excluded,
             }
         )
 
@@ -254,7 +291,13 @@ def build_snapshot(args) -> dict:
         "source_revision": f"sha256:{repositories['v1']['raw_sha256']}",
         "complete": not incomplete,
         "artifact_count": len(artifacts),
+        "published_count": len(artifacts) - len(excluded),
         "artifact_bytes": total_bytes,
+        "excluded": [
+            {"name": name, "reason": str(exc)}
+            for name, exc in sorted(excluded.items())
+        ],
+        "size_mismatches": size_warnings,
         "image_tag": args.image_tag or os.environ.get("IMAGE_TAG", ""),
         "variants": variant_summary,
         "artifacts": artifact_list,
@@ -268,7 +311,7 @@ def build_snapshot(args) -> dict:
         originals = {
             variant.key: {
                 "original_repository": repositories[variant.key]["original"],
-                "original_packages": packages_state[variant.key]["original"],
+                "original_packages": pruned_packages[variant.key],
             }
             for variant in VARIANTS
         }
@@ -276,13 +319,21 @@ def build_snapshot(args) -> dict:
         log(
             f"快照校验通过: {summary['artifact_count']} 个引用文件, "
             f"{summary['artifact_bytes']} 字节"
+            + (
+                f", {len(summary['warnings'])} 个 size 告警"
+                if summary["warnings"]
+                else ""
+            )
         )
 
     return {
         "sync_time": sync_time,
         "artifact_count": len(artifacts),
+        "published_count": len(artifacts) - len(excluded),
         "artifact_bytes": total_bytes,
         "complete": not incomplete,
+        "excluded": len(excluded),
+        "size_mismatches": len(size_warnings),
         "variants": variant_summary,
     }
 

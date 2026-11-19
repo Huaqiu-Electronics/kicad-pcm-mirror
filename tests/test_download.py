@@ -1,7 +1,13 @@
 import pytest
 
 import download
-from download import DownloadError, download_artifact, fetch_bytes
+from download import (
+    ChecksumMismatch,
+    DownloadError,
+    MissingUpstream,
+    download_artifact,
+    fetch_bytes,
+)
 from helpers import ACCEPT_V1, ACCEPT_V2, make_zip
 from verify import sha256_bytes
 
@@ -31,25 +37,39 @@ def test_download_artifact_sha_mismatch(tmp_path, upstream):
     body = make_zip({"metadata.json": b"{}"})
     upstream.add("/pkg.zip", body)
 
-    with pytest.raises(DownloadError, match="sha256 不符"):
+    with pytest.raises(ChecksumMismatch, match="sha256 不符"):
         download_artifact(
             f"{upstream.base}/pkg.zip",
             tmp_path / "pkg.zip",
             expected_sha256="0" * 64,
+            retries=2,
         )
+    assert upstream.hits["/pkg.zip"] == 2
     assert not (tmp_path / "pkg.zip").exists()
 
 
-def test_download_artifact_size_mismatch(tmp_path, upstream):
+def test_download_artifact_size_mismatch_only_warns(tmp_path, upstream):
     body = make_zip({"metadata.json": b"{}"})
     upstream.add("/pkg.zip", body)
 
-    with pytest.raises(DownloadError, match="大小不符"):
+    result = download_artifact(
+        f"{upstream.base}/pkg.zip",
+        tmp_path / "pkg.zip",
+        expected_sha256=sha256_bytes(body),
+        expected_size=len(body) + 1,
+    )
+
+    assert result["size_mismatch"] is True
+    assert (tmp_path / "pkg.zip").read_bytes() == body
+
+
+def test_download_artifact_missing_upstream_is_not_retried(tmp_path, upstream):
+    with pytest.raises(MissingUpstream, match="404"):
         download_artifact(
-            f"{upstream.base}/pkg.zip",
-            tmp_path / "pkg.zip",
-            expected_size=len(body) + 1,
+            f"{upstream.base}/gone.zip", tmp_path / "gone.zip", retries=3
         )
+
+    assert upstream.hits["/gone.zip"] == 1
 
 
 def test_download_artifact_rejects_broken_zip(tmp_path, upstream):

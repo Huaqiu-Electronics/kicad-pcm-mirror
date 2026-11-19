@@ -125,6 +125,12 @@ jobs:
           print(f"- source revision: `{data['source_revision']}`")
           print(f"- complete: {data['complete']}")
           print(f"- artifacts: {data['artifact_count']} ({data['artifact_bytes']} bytes)")
+          print(f"- published: {data.get('published_count', data['artifact_count'])}")
+          excluded = data.get("excluded") or []
+          print(f"- excluded upstream links: {len(excluded)}")
+          for item in excluded:
+              print(f"  - `{item['name']}`: {item['reason']}")
+          print(f"- download_size mismatches: {len(data.get('size_mismatches') or [])}")
           for key, variant in data["variants"].items():
               print(
                   f"- {key}: `{variant['repository']}` / `{variant['packages']}` "

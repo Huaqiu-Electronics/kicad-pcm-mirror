@@ -108,8 +108,11 @@ def make_args(upstream: UpstreamServer, tmp_path: Path, **overrides) -> SimpleNa
     return SimpleNamespace(**values)
 
 
-def build_upstream(server: UpstreamServer) -> dict:
-    """注册最小上游（2 个插件、1 个 resources），返回构造结果供断言使用。"""
+def build_upstream(server: UpstreamServer, size_delta: int = 0) -> dict:
+    """注册最小上游（2 个插件、1 个 resources），返回构造结果供断言使用。
+
+    ``size_delta`` 用于模拟上游 ``download_size`` 填写错误（内容不变）。
+    """
 
     zip_alpha = make_zip({"metadata.json": b'{"identifier":"com.example.alpha"}'})
     zip_beta = make_zip({"metadata.json": b'{"identifier":"com.example.beta"}'})
@@ -133,7 +136,7 @@ def build_upstream(server: UpstreamServer) -> dict:
                         "version": "1.0",
                         "download_url": f"{server.base}/alpha.zip",
                         "download_sha256": sha256_bytes(zip_alpha),
-                        "download_size": len(zip_alpha),
+                        "download_size": len(zip_alpha) + size_delta,
                         "install_size": 4096,
                         "kicad_version": "8.0",
                         "kicad_version_max": "10",
@@ -157,7 +160,7 @@ def build_upstream(server: UpstreamServer) -> dict:
                         "version": "2.0",
                         "download_url": f"{server.base}/beta.zip",
                         "download_sha256": sha256_bytes(zip_beta),
-                        "download_size": len(zip_beta),
+                        "download_size": len(zip_beta) + size_delta,
                         "install_size": 1024,
                         "kicad_version": "5.99",
                         "status": "stable",

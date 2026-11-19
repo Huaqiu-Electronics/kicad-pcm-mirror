@@ -121,6 +121,7 @@ def _validate_artifacts(
     dist: Path,
     referenced: dict[str, dict],
     errors: list[str],
+    warnings: list[str],
     complete: bool,
     check_zip: bool,
 ) -> dict:
@@ -135,8 +136,12 @@ def _validate_artifacts(
             continue
         size = path.stat().st_size
         total_bytes += size
+        # 上游 download_size 由作者手填、常见写错；完整性以 sha256 为准，大小仅告警
         if expected.get("size") is not None and size != expected["size"]:
-            errors.append(f"大小不符: {name} 期望 {expected['size']} 实际 {size}")
+            warnings.append(
+                f"大小不符（以 sha256 为准）: {name} "
+                f"声明 {expected['size']} 实际 {size}"
+            )
         if expected.get("sha256"):
             actual = sha256_file(path)
             if actual != expected["sha256"]:
@@ -162,6 +167,7 @@ def validate_snapshot(
     dist = Path(dist_dir)
     base = normalize_base_url(base_url)
     errors: list[str] = []
+    warnings: list[str] = []
 
     if not dist.is_dir():
         raise SnapshotError(f"快照目录不存在: {dist}")
@@ -173,7 +179,9 @@ def validate_snapshot(
             _validate_variant(dist, base, variant, spec, errors)
         )
 
-    stats = _validate_artifacts(dist, referenced, errors, complete, check_zip)
+    stats = _validate_artifacts(
+        dist, referenced, errors, warnings, complete, check_zip
+    )
 
     for path in dist.glob("*.zip"):
         if path.name not in referenced:
@@ -186,6 +194,7 @@ def validate_snapshot(
         "base_url": base,
         "artifact_count": stats["artifacts"],
         "artifact_bytes": stats["artifact_bytes"],
+        "warnings": warnings,
     }
 
 

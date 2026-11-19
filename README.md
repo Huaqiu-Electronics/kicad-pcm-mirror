@@ -82,7 +82,7 @@ ACR 的 Registry 地址与用户名直接写在 workflow 中，只需配置一�
 
 ## 校验与回滚
 
-- 同步阶段：逐个校验 `download_sha256`、`download_size` 与 ZIP 结构，任一失败即中止，不产出 JSON、不构建镜像。
+- 同步阶段：逐个校验 `download_sha256` 与 ZIP 结构，任一失败即中止；`download_size` 由上游作者手填、经常写错，因此只做一致性告警，不阻断发布。上游返回 404/410 的死链、以及内容与声明 sha256 不符（作者重传同版本）的版本会从镜像索引中剔除，并记录在 `mirror-manifest.json` 的 `excluded` 中。
 - 快照阶段：校验每个下载地址指向镜像、文件存在且 sha256 一致、元数据除 URL 外无任何变化。
 - 回滚：重新部署上一个不可变 Tag 即可，历史镜像保留在 ACR。
 
@@ -91,5 +91,5 @@ ACR 的 Registry 地址与用户名直接写在 workflow 中，只需配置一�
 
 ## 说明
 
-- 全量快照约 1.2 GB（398 个版本），CI 单次同步耗时取决于 GitHub 下载速度。
+- 全量快照约 1.2 GB（上游当前声明 398 个版本；失效链接会被剔除，实际发布数见 `mirror-manifest.json` 的 `published_count`）。CI 单次同步耗时取决于 GitHub 下载速度。
 - 中国大陆运行时不需要访问 GitHub / GitLab，镜像内不含任何动态同步逻辑。

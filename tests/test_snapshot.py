@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from helpers import BASE_URL, build_upstream, make_args
+from helpers import BASE_URL, build_upstream, make_args, make_zip
 from sync import SyncError, build_snapshot
 from validate import SnapshotError, validate_snapshot
 
@@ -89,7 +89,7 @@ def test_repeated_sync_is_deterministic(upstream, tmp_path, data):
 
 
 def test_download_failure_aborts_and_writes_no_manifest(upstream, tmp_path, data):
-    upstream.remove("/alpha.zip")
+    upstream.fail_next("/alpha.zip", 5)
 
     with pytest.raises(SyncError):
         build_snapshot(make_args(upstream, tmp_path, retries=1))
@@ -98,6 +98,74 @@ def test_download_failure_aborts_and_writes_no_manifest(upstream, tmp_path, data
     assert not (out / "repository.v1.json").exists()
     assert not (out / "packages-v1.json").exists()
     assert not (out / "mirror-manifest.json").exists()
+
+
+def test_missing_upstream_version_is_excluded(upstream, tmp_path, data):
+    upstream.remove("/beta.zip")
+
+    summary = build_snapshot(make_args(upstream, tmp_path, retries=1))
+    out = tmp_path / "dist"
+
+    assert summary["complete"] is True
+    assert summary["artifact_count"] == 2
+    assert summary["published_count"] == 1
+    assert summary["excluded"] == 1
+    assert (out / data["alpha_name"]).exists()
+    assert not (out / data["beta_name"]).exists()
+
+    packages = json.loads((out / "packages-v1.json").read_text())
+    identifiers = [package["identifier"] for package in packages["packages"]]
+    assert identifiers == ["com.example.alpha"]
+
+    manifest = json.loads((out / "mirror-manifest.json").read_text())
+    assert manifest["excluded"] == [
+        {"name": data["beta_name"], "reason": manifest["excluded"][0]["reason"]}
+    ]
+    assert "404" in manifest["excluded"][0]["reason"]
+
+    # 剔除后快照自洽，可以正常通过校验
+    validate_snapshot(out, BASE_URL)
+
+
+def test_checksum_drift_version_is_excluded(upstream, tmp_path, data):
+    # 模拟作者重传同版本资源：内容变了，但上游索引里的 sha256 没更新
+    upstream.add("/alpha.zip", make_zip({"metadata.json": b'{"reuploaded":true}'}))
+
+    summary = build_snapshot(make_args(upstream, tmp_path, retries=1))
+    out = tmp_path / "dist"
+
+    assert summary["complete"] is True
+    assert summary["published_count"] == 1
+    assert summary["excluded"] == 1
+    assert not (out / data["alpha_name"]).exists()
+    assert (out / data["beta_name"]).exists()
+
+    manifest = json.loads((out / "mirror-manifest.json").read_text())
+    assert "sha256" in manifest["excluded"][0]["reason"]
+
+    validate_snapshot(out, BASE_URL)
+
+
+def test_size_mismatch_is_recorded_without_blocking(upstream, tmp_path):
+    data = build_upstream(upstream, size_delta=7)
+
+    summary = build_snapshot(make_args(upstream, tmp_path))
+    out = tmp_path / "dist"
+
+    assert summary["complete"] is True
+    assert summary["size_mismatches"] == 2
+    # 元数据不做修正，仍与上游一致
+    packages = json.loads((out / "packages-v1.json").read_text())
+    assert packages["packages"][0]["versions"][0]["download_size"] == (
+        len(data["zip_alpha"]) + 7
+    )
+
+    manifest = json.loads((out / "mirror-manifest.json").read_text())
+    assert {item["name"] for item in manifest["size_mismatches"]} == {
+        data["alpha_name"],
+        data["beta_name"],
+    }
+    validate_snapshot(out, BASE_URL)
 
 
 def test_validate_detects_tampered_artifact(upstream, tmp_path, data):

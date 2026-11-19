@@ -23,6 +23,14 @@ class DownloadError(RuntimeError):
     """下载失败（网络错误、状态码异常或校验失败）。"""
 
 
+class MissingUpstream(DownloadError):
+    """上游链接已永久失效（404/410），重试无意义。"""
+
+
+class ChecksumMismatch(DownloadError):
+    """内容与上游声明的 sha256 不符（常见于作者重传同版本资源）。"""
+
+
 def _build_request(url: str, accept: str | None) -> urllib.request.Request:
     headers = {"User-Agent": USER_AGENT}
     if accept:
@@ -59,7 +67,13 @@ def _stream_to_file(
     digest = hashlib.sha256()
     size = 0
     request = _build_request(url, accept)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (404, 410):
+            raise MissingUpstream(f"HTTP {exc.code}: {url}") from exc
+        raise
+    with response:
         if response.status != 200:
             raise DownloadError(f"HTTP {response.status}: {url}")
         with open(tmp_path, "wb") as handle:
@@ -94,11 +108,14 @@ def download_artifact(
 
     if skip_existing and target.is_file() and expected_sha256:
         if sha256_file(target) == expected_sha256:
+            actual_size = target.stat().st_size
             return {
                 "name": target.name,
-                "size": target.stat().st_size,
+                "size": actual_size,
                 "sha256": expected_sha256,
                 "skipped": True,
+                "size_mismatch": expected_size is not None
+                and actual_size != expected_size,
             }
 
     tmp_path = target.with_name(target.name + ".part")
@@ -107,12 +124,10 @@ def download_artifact(
     for attempt in range(1, retries + 1):
         try:
             size, digest = _stream_to_file(url, tmp_path, accept, timeout)
-            if expected_size is not None and size != expected_size:
-                raise DownloadError(
-                    f"大小不符: {target.name} 期望 {expected_size} 实际 {size}"
-                )
+            # 上游 download_size 由作者手填，常见写错；以 sha256 为准，大小仅记录
+            size_mismatch = expected_size is not None and size != expected_size
             if expected_sha256 and digest != expected_sha256:
-                raise DownloadError(
+                raise ChecksumMismatch(
                     f"sha256 不符: {target.name} 期望 {expected_sha256} 实际 {digest}"
                 )
             if check_zip:
@@ -125,7 +140,18 @@ def download_artifact(
                 "size": size,
                 "sha256": digest,
                 "skipped": False,
+                "size_mismatch": size_mismatch,
             }
+        except MissingUpstream:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        except ChecksumMismatch:
+            # 校验失败先重试（可能是截断），重试耗尽后交由调用方决定是否剔除
+            tmp_path.unlink(missing_ok=True)
+            if attempt < retries:
+                time.sleep(min(2 ** (attempt - 1), 8))
+                continue
+            raise
         except (urllib.error.URLError, OSError, DownloadError, VerifyError) as exc:
             last_error = exc
             tmp_path.unlink(missing_ok=True)
@@ -143,10 +169,13 @@ def download_many(
     skip_existing: bool = False,
     accept: str | None = None,
     on_result=None,
-) -> tuple[dict[str, dict], list[tuple[str, str]]]:
-    """并发下载，返回（成功结果，失败列表）；本函数不中断，由调用方决定退出。"""
+) -> tuple[dict[str, dict], list[tuple[str, Exception]]]:
+    """并发下载，返回（成功结果，失败列表）；本函数不中断，由调用方决定退出。
+
+    失败项为 ``(文件名, 异常)``，调用方可通过 ``MissingUpstream`` 区分上游死链。
+    """
     results: dict[str, dict] = {}
-    errors: list[tuple[str, str]] = []
+    errors: list[tuple[str, Exception]] = []
     if not tasks:
         return results, errors
 
@@ -173,7 +202,7 @@ def download_many(
                 if on_result:
                     on_result(name, results[name], None)
             except Exception as exc:  # noqa: BLE001 - 统一收集为构建失败原因
-                errors.append((name, str(exc)))
+                errors.append((name, exc))
                 if on_result:
                     on_result(name, None, exc)
     return results, errors
