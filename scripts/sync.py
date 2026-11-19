@@ -40,6 +40,12 @@ from verify import sha256_bytes
 
 LOG = "[kicad-mirror]"
 
+# repository.kicad.org 是 Cloudflare 前置入口，偶发 504；GitLab 仓库里有同样内容的原始文件
+GITLAB_REPOSITORY = {
+    "v1": "https://gitlab.com/kicad/addons/repository/-/raw/main/repository-v1.json",
+    "v2": "https://gitlab.com/kicad/addons/repository/-/raw/main/repository.json",
+}
+
 
 class SyncError(RuntimeError):
     """同步失败，快照不可发布。"""
@@ -64,10 +70,15 @@ def _zip_problem(data: bytes) -> str | None:
     return f"ZIP 内文件损坏: {bad}" if bad else None
 
 
-def _fetch_metadata(url: str, accept: str | None, args) -> bytes:
+def _fetch_metadata(
+    url: str, accept: str | None, args, retries: int | None = None
+) -> bytes:
     try:
         return fetch_bytes(
-            url, accept=accept, timeout=args.timeout, retries=args.retries
+            url,
+            accept=accept,
+            timeout=args.timeout,
+            retries=args.retries if retries is None else retries,
         )
     except Exception as exc:  # noqa: BLE001 - 统一转换为发布阻断错误
         raise SyncError(f"获取元数据失败: {url}: {exc}") from exc
@@ -99,17 +110,36 @@ def build_snapshot(args) -> dict:
         fetched_urls[url] = raw
         return raw, False
 
-    # 1) 上游两个变体的 repository.json
+    # 1) 上游两个变体的 repository.json；官方入口不可用时回退到 GitLab 原始文件
     repositories: dict[str, dict] = {}
     for variant in VARIANTS:
-        raw = _fetch_metadata(upstream, variant.accept, args)
+        fallback = (
+            GITLAB_REPOSITORY.get(variant.key)
+            if upstream == UPSTREAM_REPOSITORY_URL
+            else None
+        )
+        try:
+            # 走官方入口时少重试几次，尽快判断是否需要回退
+            raw = _fetch_metadata(
+                upstream,
+                variant.accept,
+                args,
+                retries=min(args.retries, 2) if fallback else None,
+            )
+            source = upstream
+        except SyncError:
+            if not fallback:
+                raise
+            log(f"{variant.key} 官方入口不可用，回退到 GitLab 原始地址")
+            raw = _fetch_metadata(fallback, None, args)
+            source = fallback
         repositories[variant.key] = {
             "raw_sha256": sha256_bytes(raw),
             "original": _parse_metadata(
-                raw, f"{variant.key} repository.json", upstream
+                raw, f"{variant.key} repository.json", source
             ),
         }
-        log(f"已获取 {variant.key} repository.json（{len(raw)} 字节）")
+        log(f"已获取 {variant.key} repository.json（{len(raw)} 字节，来自 {source}）")
 
     # 2) packages 文档 + resources 字节（按上游声明的 sha256 校验）
     packages_state: dict[str, dict] = {}

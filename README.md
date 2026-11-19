@@ -44,6 +44,11 @@ curl http://localhost:8080/kicad-addons/repository.json
 | `--workers` / `--retries` / `--timeout` | 并发数与重试策略 |
 | `--image-tag` | 写入 `mirror-manifest.json` 的镜像 Tag（也可用 `IMAGE_TAG`） |
 
+数据来源默认为 `https://repository.kicad.org/repository.json`。该入口由 Cloudflare 前置，
+偶发 504/522；获取失败时会自动回退到 GitLab 仓库中的原始文件
+（`kicad/addons/repository` 的 `repository-v1.json` / `repository.json`，内容一致），
+避免入口抖动阻断整次同步。
+
 ## v1 / v2 兼容
 
 KiCad 10.0+ 会在请求头中发送 `Accept: application/vnd.kicad.pcm.v2+json`，
