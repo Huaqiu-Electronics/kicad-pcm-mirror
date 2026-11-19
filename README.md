@@ -79,6 +79,29 @@ ACR 的 Registry 地址与用户名直接写在 workflow 中，只需配置一�
 当前只推送 ACR，不再推送到 GHCR。ACR 仓库类型可按需选择公开或私有：考虑到插件本身是开源内容，
 当前按公开分发，任何人可直接拉取；如需限制访问，把 ACR 仓库调整为私有即可，无需改动 workflow。
 
+## 运行（本地 / 局域网）
+
+镜像内的清单地址在构建期固化为 `https://eda.cn/kicad-addons/`；容器启动时
+`/docker-entrypoint.d/40-rewrite-download-urls.sh` 会按 `DOWNLOAD_BASE_URL`
+原地替换 `repository.v1.json`、`repository.v2.json`、`packages-v1.json`、
+`packages.json` 中的该前缀，无需重新构建镜像。
+
+```bash
+docker run -d --name kicad-pcm-mirror \
+  -p 8080:8080 \
+  -e DOWNLOAD_BASE_URL=http://192.168.1.10:8080/kicad-addons/ \
+  crpi-uk7yo7mxz74rkbcy.cn-shanghai.personal.cr.aliyuncs.com/lwj-kicad/kicad-pcm-mirror:latest
+```
+
+KiCad 中填写 `http://192.168.1.10:8080/kicad-addons/repository.json`。
+
+- 容器内 nginx 监听 8080，`-p` 必须映射到容器的 8080（写成 `-p 8080:80` 会连接被重置）
+- `DOWNLOAD_BASE_URL` 必须以 `http://` 或 `https://` 开头，结尾斜杠会自动补全；
+  未设置时保留镜像内置地址；格式非法则容器启动失败并给出原因
+- 修改该变量需要重建容器（`docker rm -f` 后重新 `docker run`），`docker restart` 不会重新替换
+- 地址应填使用者能访问到的地址（如 `http://192.168.1.10:8080/kicad-addons/`）；
+  只填到主机端口时会自动补 `/kicad-addons/`，仅本机使用时才填 `localhost`
+
 ## 校验与回滚
 
 - 同步阶段：逐个校验 `download_sha256` 与 ZIP 结构，任一失败即中止；`download_size` 由上游作者手填、经常写错，因此只做一致性告警，不阻断发布。上游返回 404/410 的死链、以及内容与声明 sha256 不符（作者重传同版本）的版本会从镜像索引中剔除，并记录在 `mirror-manifest.json` 的 `excluded` 中。

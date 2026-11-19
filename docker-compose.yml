@@ -5,6 +5,8 @@ services:
       context: .
     ports:
       - "8080:8080"
+    environment:
+      DOWNLOAD_BASE_URL: ${DOWNLOAD_BASE_URL:-http://localhost:8080/kicad-addons/}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
