@@ -221,3 +221,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+kicad-adds-on-spider/*
+*.md
+!README.md

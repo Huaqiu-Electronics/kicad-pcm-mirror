@@ -1,0 +1,133 @@
+name: Sync KiCad PCM Mirror
+
+on:
+  schedule:
+    # 每 3 天一次，UTC 20:00 = 北京时间 04:00
+    - cron: "0 20 */3 * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "冒烟模式：仅同步前 N 个产物（0 = 全量，产物不可发布）"
+        required: false
+        default: "0"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: kicad-pcm-mirror
+  cancel-in-progress: false
+
+env:
+  BASE_URL: https://eda.cn/kicad-addons/
+  PYTHON_VERSION: "3.12"
+  # 定时任务没有 inputs，统一回退为 0（全量）
+  LIMIT: ${{ github.event.inputs.limit || '0' }}
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install test dependencies
+        run: python -m pip install --no-cache-dir -r requirements.txt
+      - name: Run tests
+        run: python -m pytest -q
+
+  publish:
+    name: Sync and publish image
+    needs: test
+    # push 到 main 只跑测试；同步与发布由定时任务或手动触发
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Compute image tag
+        id: meta
+        run: |
+          TAG="$(TZ=Asia/Shanghai date +%Y.%m.%d)-$(git rev-parse --short HEAD)-r${GITHUB_RUN_NUMBER}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "ghcr=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Sync official repository
+        run: |
+          python scripts/sync.py \
+            --out dist \
+            --base-url "$BASE_URL" \
+            --image-tag "${{ steps.meta.outputs.tag }}" \
+            --limit "$LIMIT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to Aliyun ACR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: crpi-uk7yo7mxz74rkbcy.cn-shanghai.personal.cr.aliyuncs.com
+          username: liuweijian@1613452717930870
+          password: ${{ secrets.KICAD_PCM_ACR_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push snapshot image
+        if: env.LIMIT == '0'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          provenance: false
+          tags: |
+            crpi-uk7yo7mxz74rkbcy.cn-shanghai.personal.cr.aliyuncs.com/lwj-kicad/kicad-pcm-mirror:${{ steps.meta.outputs.tag }}
+            crpi-uk7yo7mxz74rkbcy.cn-shanghai.personal.cr.aliyuncs.com/lwj-kicad/kicad-pcm-mirror:latest
+            ${{ steps.meta.outputs.ghcr }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.ghcr }}:latest
+
+      - name: Upload build metadata
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mirror-manifest
+          path: dist/mirror-manifest.json
+          if-no-files-found: error
+
+      - name: Publish job summary
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+
+          with open("dist/mirror-manifest.json", encoding="utf-8") as handle:
+              data = json.load(handle)
+          print("### KiCad PCM mirror snapshot")
+          print(f"- image tag: `{data['image_tag']}`")
+          print(f"- source: {data['source']}")
+          print(f"- source revision: `{data['source_revision']}`")
+          print(f"- complete: {data['complete']}")
+          print(f"- artifacts: {data['artifact_count']} ({data['artifact_bytes']} bytes)")
+          for key, variant in data["variants"].items():
+              print(
+                  f"- {key}: `{variant['repository']}` / `{variant['packages']}` "
+                  f"(schema_version={variant['schema_version']})"
+              )
+          PY

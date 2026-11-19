@@ -1,0 +1,13 @@
+.git
+.github
+.gitignore
+tests
+scripts
+requirements.txt
+README.md
+LICENSE
+docker-compose.yml
+*.md
+__pycache__
+*.pyc
+.pytest_cache
