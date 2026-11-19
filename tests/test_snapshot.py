@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from helpers import BASE_URL, build_upstream, make_args, make_zip
+from helpers import ACCEPT_V1, BASE_URL, build_upstream, make_args, make_zip
 from sync import SyncError, build_snapshot
 from validate import SnapshotError, validate_snapshot
 
@@ -98,6 +98,13 @@ def test_download_failure_aborts_and_writes_no_manifest(upstream, tmp_path, data
     assert not (out / "repository.v1.json").exists()
     assert not (out / "packages-v1.json").exists()
     assert not (out / "mirror-manifest.json").exists()
+
+
+def test_invalid_metadata_json_reports_source(upstream, tmp_path, data):
+    upstream.add("/repository.json", b"<html>blocked</html>", ACCEPT_V1)
+
+    with pytest.raises(SyncError, match="repository.json 不是有效 JSON"):
+        build_snapshot(make_args(upstream, tmp_path))
 
 
 def test_missing_upstream_version_is_excluded(upstream, tmp_path, data):

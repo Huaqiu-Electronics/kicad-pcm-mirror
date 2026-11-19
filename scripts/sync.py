@@ -73,6 +73,15 @@ def _fetch_metadata(url: str, accept: str | None, args) -> bytes:
         raise SyncError(f"获取元数据失败: {url}: {exc}") from exc
 
 
+def _parse_metadata(raw: bytes, label: str, url: str) -> dict:
+    try:
+        return loads(raw)
+    except (ValueError, ManifestError) as exc:
+        raise SyncError(
+            f"{label} 不是有效 JSON（{len(raw)} 字节）: {url}: {exc}"
+        ) from exc
+
+
 def build_snapshot(args) -> dict:
     upstream = args.upstream
     base = normalize_base_url(args.base_url)
@@ -96,7 +105,9 @@ def build_snapshot(args) -> dict:
         raw = _fetch_metadata(upstream, variant.accept, args)
         repositories[variant.key] = {
             "raw_sha256": sha256_bytes(raw),
-            "original": loads(raw),
+            "original": _parse_metadata(
+                raw, f"{variant.key} repository.json", upstream
+            ),
         }
         log(f"已获取 {variant.key} repository.json（{len(raw)} 字节）")
 
@@ -116,7 +127,9 @@ def build_snapshot(args) -> dict:
                 f"{variant.key} packages.json 的 sha256 与上游声明不一致"
             )
         packages_state[variant.key] = {
-            "original": loads(raw),
+            "original": _parse_metadata(
+                raw, f"{variant.key} packages.json", packages_url
+            ),
             "sha256": actual,
         }
         log(

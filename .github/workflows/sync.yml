@@ -10,6 +10,10 @@ on:
         description: "冒烟模式：仅同步前 N 个产物（0 = 全量，产物不可发布）"
         required: false
         default: "0"
+      skip_tests:
+        description: "跳过单元测试（仅建议全量同步时勾选）"
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -29,6 +33,8 @@ env:
 jobs:
   test:
     name: Unit tests
+    # 手动全量同步时可勾选 skip_tests 跳过；定时任务与 push 始终运行
+    if: ${{ !inputs.skip_tests }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -47,7 +53,8 @@ jobs:
     name: Sync and publish image
     needs: test
     # push 到 main 只跑测试；同步与发布由定时任务或手动触发
-    if: github.event_name != 'push'
+    # test 被 skip 时仍继续，但测试失败则不发布
+    if: ${{ always() && !cancelled() && github.event_name != 'push' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:

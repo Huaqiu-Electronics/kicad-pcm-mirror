@@ -53,7 +53,10 @@ def fetch_bytes(
             ) as response:
                 if response.status != 200:
                     raise DownloadError(f"HTTP {response.status}: {url}")
-                return response.read()
+                body = response.read()
+                if not body:
+                    raise DownloadError(f"空响应: {url}")
+                return body
         except (urllib.error.URLError, OSError, DownloadError) as exc:
             last_error = exc
             if attempt < retries:

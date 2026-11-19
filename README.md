@@ -62,7 +62,7 @@ Nginx 按 `Accept` 选择文件，对外仍只有一个 `/kicad-addons/repositor
 | 触发 | 行为 |
 | --- | --- |
 | `schedule`（每 3 天） | 全量同步、校验、构建并推送镜像 |
-| `workflow_dispatch` | 手动全量同步，或 `limit>0` 冒烟 |
+| `workflow_dispatch` | 手动全量同步，或 `limit>0` 冒烟；勾选 `skip_tests` 可跳过单元测试 |
 | `push` 到 `main` | 只运行单元测试 |
 
 镜像 Tag：`YYYY.MM.DD-<短提交>-r<run号>`，另推 `latest`。

@@ -120,6 +120,14 @@ def test_download_skips_valid_existing_file(tmp_path, upstream):
     assert upstream.hits["/pkg.zip"] == 0
 
 
+def test_fetch_bytes_retries_on_empty_body(upstream):
+    upstream.add("/meta.json", b"")
+
+    with pytest.raises(DownloadError, match="空响应"):
+        fetch_bytes(f"{upstream.base}/meta.json", retries=2)
+    assert upstream.hits["/meta.json"] == 2
+
+
 def test_fetch_bytes_routes_by_accept_header(upstream):
     upstream.add("/meta.json", b'{"schema":"v1"}', ACCEPT_V1)
     upstream.add("/meta.json", b'{"schema":"v2"}', ACCEPT_V2)
